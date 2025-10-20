@@ -16,169 +16,202 @@ setTimeout(() => {
 	}
 }, 100);
 
+// popup.js
 function initializePopup() {
-	if (window.popupInitialized) {
-		console.log('Popup already initialized, skipping');
-		return;
-	}
+  if (window.popupInitialized) {
+    console.log('Popup already initialized, skipping');
+    return;
+  }
 
-	window.popupInitialized = true;
-	console.log('🟢 popup.js INITIALIZED');
+  window.popupInitialized = true;
+  console.log('🟢 popup.js INITIALIZED');
 
-	const apiKeyInput = document.getElementById('apiKey');
-	const targetLangSelect = document.getElementById('targetLang');
-	const inputText = document.getElementById('inputText');
-	const translateBtn = document.getElementById('translateBtn');
-	const translationResult = document.getElementById('translationResult');
-	const translatedText = document.getElementById('translatedText');
-	const statusDiv = document.getElementById('status');
-	let currentError = null;
+  // Wake background immediately
+  chrome.runtime.sendMessage({ action: 'wake' }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('❌ Background wake failed:', chrome.runtime.lastError.message);
+      showError('Extension error: Background not responding. Reload extension.');
+    } else {
+      console.log('✅ Background awake:', response);
+    }
+  });
 
-	if (!apiKeyInput || !targetLangSelect || !inputText || !translateBtn) {
-		console.error('❌ Missing DOM elements');
-		return;
-	}
+  const apiKeyInput = document.getElementById('apiKey');
+  const targetLangSelect = document.getElementById('targetLang');
+  const inputText = document.getElementById('inputText');
+  const translateBtn = document.getElementById('translateBtn');
+  const translationResult = document.getElementById('translationResult');
+  const translatedText = document.getElementById('translatedText');
+  const statusDiv = document.getElementById('status');
+  let currentError = null;
 
-	console.log('✅ All DOM elements found');
+  if (!apiKeyInput || !targetLangSelect || !inputText || !translateBtn) {
+    console.error('❌ Missing DOM elements');
+    return;
+  }
 
-	// Load saved data (no sourceLang anymore)
-	chrome.storage.sync.get([
-		'apiKey', 'targetLang', 'lastInput', 'lastResult'
-	], (result) => {
-		console.log('Storage loaded:', Object.keys(result));
+  console.log('✅ All DOM elements found');
 
-		if (result.apiKey) apiKeyInput.value = result.apiKey;
-		if (result.targetLang) targetLangSelect.value = result.targetLang;
-		if (result.lastInput) inputText.value = result.lastInput;
+  // Load saved data
+  chrome.storage.sync.get([
+    'apiKey', 'targetLang', 'lastInput', 'lastResult'
+  ], (result) => {
+    console.log('Storage loaded:', Object.keys(result));
 
-		// Show last result
-		if (result.lastResult) {
-			console.log('Showing last result');
-			translatedText.textContent = result.lastResult;
-			translationResult.style.display = 'block';
-		}
+    if (result.apiKey) apiKeyInput.value = result.apiKey;
+    if (result.targetLang) targetLangSelect.value = result.targetLang;
+    if (result.lastInput) inputText.value = result.lastInput;
 
-		autoResizeTextarea();
-	});
+    // Show last result
+    if (result.lastResult) {
+      console.log('Showing last result');
+      translatedText.textContent = result.lastResult;
+      translationResult.style.display = 'block';
+    }
 
-	// Save settings (simplified)
-	const saveSettings = () => {
-		chrome.storage.sync.set({
-			apiKey: apiKeyInput.value.trim(),
-			targetLang: targetLangSelect.value,
-			lastInput: inputText.value
-		});
-	};
+    autoResizeTextarea();
+  });
 
-	apiKeyInput.onchange = saveSettings;
-	targetLangSelect.onchange = saveSettings;
+  // Save settings
+  const saveSettings = () => {
+    chrome.storage.sync.set({
+      apiKey: apiKeyInput.value.trim(),
+      targetLang: targetLangSelect.value,
+      lastInput: inputText.value
+    });
+  };
 
-	inputText.oninput = () => {
-		saveSettings();
-		autoResizeTextarea();
-		if (currentError) {
-			clearError();
-			currentError = null;
-		}
-	};
+  apiKeyInput.onchange = saveSettings;
+  targetLangSelect.onchange = saveSettings;
 
-	// Translate button (no sourceLang parameter)
-	translateBtn.onclick = async () => {
-		const text = inputText.value.trim();
-		const apiKey = apiKeyInput.value.trim();
-		const targetLang = targetLangSelect.value;
+  inputText.oninput = () => {
+    saveSettings();
+    autoResizeTextarea();
+    if (currentError) {
+      clearError();
+      currentError = null;
+    }
+  };
 
-		if (!text) {
-			showError('Please enter text to translate');
-			return;
-		}
-		if (!apiKey) {
-			showError('Please enter your Gemini API key');
-			return;
-		}
-		if (text.length > 4000) {
-			showError('Text too long (max 4000 chars)');
-			return;
-		}
+  // Shared submit handler
+  async function handleSubmit() {
+    const text = inputText.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+    const targetLang = targetLangSelect.value;
 
-		saveSettings();
-		chrome.storage.sync.set({ apiKey });
+    if (!text) {
+      showError('Please enter text to translate');
+      return;
+    }
+    if (!apiKey) {
+      showError('Please enter your Gemini API key');
+      return;
+    }
+    if (text.length > 4000) {
+      showError('Text too long (max 4000 chars)');
+      return;
+    }
 
-		translateBtn.disabled = true;
-		translateBtn.textContent = 'Translating...';
+    saveSettings();
+    chrome.storage.sync.set({ apiKey });
 
-		try {
-			console.log('Sending translation request:', {
-				text: text.substring(0, 50) + '...',
-				targetLang
-			});
+    translateBtn.disabled = true;
+    translateBtn.textContent = 'Translating...';
 
-			const translation = await new Promise((resolve, reject) => {
-				chrome.runtime.sendMessage({
-					action: 'translateText',
-					text: text,
-					targetLang: targetLang  // Only targetLang needed
-				}, (response) => {
-					console.log('📨 Background response:', response);
+    try {
+      console.log('Sending translation request:', {
+        text: text.substring(0, 50) + '...',
+        targetLang
+      });
 
-					if (chrome.runtime.lastError) {
-						reject(new Error(chrome.runtime.lastError.message));
-						return;
-					}
+      const translation = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({
+          action: 'translateText',
+          text: text,
+          targetLang: targetLang
+        }, (response) => {
+          console.log('📨 Background response:', response);
 
-					if (response?.error) {
-						const apiError = new Error(response.error);
-						apiError.stack = response.stack;
-						reject(apiError);
-						return;
-					}
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
 
-					if (response?.result) {
-						resolve(String(response.result).trim());
-					} else {
-						reject(new Error(`Invalid response: ${JSON.stringify(response)}`));
-					}
-				});
-			});
+          if (response?.error) {
+            const apiError = new Error(response.error);
+            apiError.stack = response.stack;
+            reject(apiError);
+            return;
+          }
 
-			console.log('✅ Translation received');
-			translatedText.textContent = translation;
-			translationResult.style.display = 'block';
-			clearError();
-			inputText.blur();
+          if (response?.result) {
+            resolve(String(response.result).trim());
+          } else {
+            reject(new Error(`Invalid response: ${JSON.stringify(response)}`));
+          }
+        });
+      });
 
-			// Save successful result
-			chrome.storage.sync.set({
-				lastResult: translation,
-				lastTargetLang: targetLang
-			});
+      console.log('✅ Translation received');
+      translatedText.textContent = translation;
+      translationResult.style.display = 'block';
+      clearError();
+      inputText.blur();
 
-		} catch (originalError) {
-			console.error('💥 Translation error:', originalError.message);
-			showError(originalError.message);
-		} finally {
-			translateBtn.disabled = false;
-			translateBtn.textContent = 'Translate';
-		}
-	};
+      // Save successful result
+      chrome.storage.sync.set({
+        lastResult: translation,
+        lastTargetLang: targetLang
+      });
 
-	function autoResizeTextarea() {
-		inputText.style.height = 'auto';
-		inputText.style.height = Math.min(inputText.scrollHeight, 200) + 'px';
-	}
+    } catch (originalError) {
+      console.error('💥 Translation error:', originalError.message);
+      showError(originalError.message);
+    } finally {
+      translateBtn.disabled = false;
+      translateBtn.textContent = 'Translate';
+    }
+  }
 
-	function showError(message) {
-		currentError = message;
-		statusDiv.textContent = message;
-		statusDiv.className = 'error';
-		statusDiv.style.display = 'block';
-	}
+  // Translate button
+  translateBtn.onclick = handleSubmit;
 
-	function clearError() {
-		currentError = null;
-		statusDiv.style.display = 'none';
-	}
+  // Ctrl+Enter to submit
+  inputText.addEventListener('keydown', (event) => {
+    if (event.ctrlKey && event.key === 'Enter') {
+      event.preventDefault(); // Prevent newline in textarea
+      handleSubmit();
+    }
+  });
 
-	setTimeout(() => inputText.focus(), 200);
-	console.log('🟢 Popup initialization complete');
+  function autoResizeTextarea() {
+    inputText.style.height = 'auto';
+    inputText.style.height = Math.min(inputText.scrollHeight, 200) + 'px';
+  }
+
+  function showError(message) {
+    currentError = message;
+    statusDiv.textContent = message;
+    statusDiv.className = 'error';
+    statusDiv.style.display = 'block';
+  }
+
+  function clearError() {
+    currentError = null;
+    statusDiv.style.display = 'none';
+  }
+
+  // Handle debug logs from background
+  chrome.runtime.onMessage.addListener((request) => {
+    if (request.action === 'debugLog') {
+      const logFunc = console[request.level] || console.log;
+      logFunc(`[FORWARDED] ${request.message}`);
+    }
+  });
+
+  setTimeout(() => inputText.focus(), 200);
+  console.log('🟢 Popup initialization complete');
 }
+
+// Run on popup load
+document.addEventListener('DOMContentLoaded', initializePopup);
