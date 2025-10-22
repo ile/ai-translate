@@ -1,12 +1,12 @@
 {
 	"manifest_version": 3,
 	"name": "AI Translator",
-	"version": "1.0.1",
-	"description": "AI-powered translation using Google Gemini (free tier)",
+	"version": "1.0.4",
 	"permissions": [
 		"storage",
 		"scripting",
-		"activeTab"
+		"activeTab",
+		"contextMenus"
 	],
 	"host_permissions": [
 		"<all_urls>",

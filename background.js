@@ -38,7 +38,7 @@ function initializeContextMenu() {
       // Create new menu
       chrome.contextMenus.create({
         id: "translateWithAI",
-        title: "Translate with Gemini AI",
+        title: "Translate with AI Translator",
         contexts: ["selection"]
       }, () => {
         if (chrome.runtime.lastError) {
