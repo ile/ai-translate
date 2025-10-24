@@ -79,51 +79,125 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 	}
 });
 
-// Context menu handler with loading overlay
+// Context menu handler
 if (chrome.contextMenus) {
+	// Track state per tab
+	const tabStates = new Map();
+
 	chrome.contextMenus.onClicked.addListener((info, tab) => {
-		if (info.menuItemId === 'translateWithAI' && info.selectionText && tab?.id) {
+		const currentTime = Date.now();
+		const tabId = tab?.id;
+		if (!tabId) {
+			console.error('Invalid tab ID');
+			logToPopup('Invalid tab ID', 'error');
+			return;
+		}
+
+		// Initialize tab state if not exists
+		if (!tabStates.has(tabId)) {
+			tabStates.set(tabId, { lastClickTime: 0, scriptsInjected: false });
+		}
+		const tabState = tabStates.get(tabId);
+
+		// Debounce clicks
+		const debounceDelay = 2000; // 2 seconds
+		if (currentTime - tabState.lastClickTime < debounceDelay) {
+			console.log('Debounced context menu click, ignoring');
+			logToPopup('Debounced context menu click, ignoring', 'warn');
+			return;
+		}
+		tabState.lastClickTime = currentTime;
+
+		if (info.menuItemId === 'translateWithAI' && info.selectionText && info.frameId === 0) {
+			console.log('Context menu clicked - translating selection:', info.selectionText);
 			logToPopup('Context menu clicked - translating selection');
 
-			// Inject loading overlay immediately
-			if (chrome.scripting) {
-				chrome.scripting.executeScript({
-					target: { tabId: tab.id },
-					func: showLoadingOverlay,
-					args: [info.selectionText]
-				}).catch(err => {
-					logToPopup(`Loading overlay injection failed: ${err.message}`, 'error');
-				});
-			}
-
-			// Handle translation
-			Promise.resolve().then(async () => {
-				try {
-					const result = await translateText(info.selectionText, 'English', tab, 'selection');
-					logToPopup('Context menu translation succeeded');
-				} catch (error) {
-					logToPopup(`Context menu translation failed: ${error.message}`, 'error');
-					if (tab?.id && chrome.scripting) {
-						try {
-							await chrome.scripting.executeScript({
-								target: { tabId: tab.id },
-								func: showErrorOverlay,
-								args: [info.selectionText, error.message]
-							});
-						} catch (scriptError) {
-							logToPopup(`Overlay error: ${scriptError.message}`, 'error');
-						}
-					}
+			// Inject scripts only once
+			const injectScripts = () => {
+				if (!tabState.scriptsInjected) {
+					console.log('Injecting scripts for tab:', tabId);
+					tabState.scriptsInjected = true;
+					return chrome.scripting.executeScript({
+						target: { tabId, frameIds: [0] },
+						files: ['custom-elements-polyfill.js', 'overlay.js']
+					}).catch(err => {
+						console.error('Overlay script injection failed:', err.message);
+						logToPopup(`Overlay script injection failed: ${err.message}`, 'error');
+						tabState.scriptsInjected = false;
+						throw err;
+					});
 				}
+				console.log('Scripts already injected for tab:', tabId);
+				return Promise.resolve();
+			};
+
+			// Create loading overlay and handle translation
+			injectScripts().then(() => {
+				console.log('Creating loading overlay for tab:', tabId);
+
+				// Create loading overlay
+				chrome.scripting.executeScript({
+					target: { tabId, frameIds: [0] },
+					func: (original) => {
+						console.log('Creating loading overlay with text:', original);
+						createOverlay('loading', original);
+					},
+					args: [info.selectionText]
+				}).then(() => {
+					console.log('Loading overlay created successfully');
+				}).catch(err => {
+					console.error('Loading overlay injection failed:', err.message);
+				});
+
+				// Handle translation with timeout
+				Promise.race([
+					translateText(info.selectionText, 'English', tab, 'selection'),
+					new Promise((_, reject) => setTimeout(() => reject(new Error('Translation timeout after 10s')), 10000))
+				]).then(result => {
+					console.log('Translation succeeded, updating overlay with result');
+
+					chrome.scripting.executeScript({
+						target: { tabId, frameIds: [0] },
+						func: (original, translation) => {
+							console.log('Updating overlay with translation result');
+							createOverlay('translation', original, translation);
+						},
+						args: [info.selectionText, result]
+					}).then(() => {
+						console.log('Overlay updated with translation successfully');
+					}).catch(err => {
+						console.error('Overlay update failed:', err.message);
+					});
+				}).catch(error => {
+					console.error('Translation failed, updating overlay with error');
+
+					chrome.scripting.executeScript({
+						target: { tabId, frameIds: [0] },
+						func: (original, errorMessage) => {
+							console.log('Updating overlay with error');
+							createOverlay('error', original, errorMessage);
+						},
+						args: [info.selectionText, error.message]
+					}).then(() => {
+						console.log('Overlay updated with error successfully');
+					}).catch(err => {
+						console.error('Error overlay update failed:', err.message);
+					});
+				});
 			}).catch(err => {
-				logToPopup(`Unexpected context menu error: ${err.message}`, 'error');
+				console.error('Script injection failed:', err.message);
 			});
 		} else {
-			logToPopup('Invalid context menu call - missing selection or tab', 'warn');
+			console.log('Invalid context menu call - missing selection, tab, or not in top-level frame');
+			logToPopup('Invalid context menu call - missing selection, tab, or not in top-level frame', 'warn');
 		}
 	});
-} else {
-	logToPopup('ContextMenus API not available - skipping listener', 'warn');
+
+	// Clean up tab state on tab close
+	chrome.tabs.onRemoved.addListener((tabId) => {
+		console.log('Cleaning up tab state for tab:', tabId);
+		tabStates.delete(tabId);
+	});
 }
 
 // Simplified translateText
@@ -136,18 +210,7 @@ async function translateText(text, targetLang = 'English', tab = null, source = 
 		const translation = await translateWithGemini(text, targetLang, apiKey);
 		const result = String(translation || 'Translation unavailable');
 
-		if (source === 'selection' && tab?.id && chrome.scripting) {
-			try {
-				await chrome.scripting.executeScript({
-					target: { tabId: tab.id },
-					func: showTranslationOverlay,
-					args: [text, result]
-				});
-			} catch (scriptError) {
-				logToPopup(`Overlay injection failed: ${scriptError.message}`, 'error');
-			}
-		}
-
+		// For popup translations, store the result
 		if (source !== 'selection') {
 			chrome.storage.sync.set({
 				lastResult: result,
@@ -181,6 +244,9 @@ RULES:
 - Plain text only`;
 
 	try {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout per model
+
 		const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -193,8 +259,11 @@ RULES:
 					topK: 1
 				},
 				safetySettings: []
-			})
+			}),
+			signal: controller.signal
 		});
+
+		clearTimeout(timeoutId);
 
 		if (!response.ok) {
 			const errorText = await response.text();
@@ -202,10 +271,13 @@ RULES:
 			try {
 				errorObj = JSON.parse(errorText);
 				if (errorObj.error?.status === 'RESOURCE_EXHAUSTED') {
-					throw new Error(`Quota exceeded on ${model}: ${errorObj.error?.message || 'Rate limit'}`);
+					logToPopup(`Quota exceeded on ${model}: ${errorObj.error?.message || 'Rate limit'}`, 'error');
+					return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
 				}
-			} catch (e) { }
-			throw new Error(`HTTP ${response.status} (${model})`);
+				throw new Error(`API error: ${errorObj.error?.message || errorText}`);
+			} catch (e) {
+				throw new Error(`HTTP ${response.status} (${model}): ${errorText}`);
+			}
 		}
 
 		const data = await response.json();
@@ -238,102 +310,14 @@ RULES:
 		return translation;
 	} catch (error) {
 		logToPopup(`${model} error: ${error.message}`, 'error');
-		if (error.message.includes('RESOURCE_EXHAUSTED') || error.message.includes('Quota exceeded')) {
-			throw new Error(`Free tier quota exceeded on ${model}. Check aistudio.google.com`);
+		if (error.name === 'AbortError') {
+			logToPopup(`${model} timed out, trying next model...`, 'warn');
+			return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
 		}
-		return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
+		if (error.message.includes('RESOURCE_EXHAUSTED') || error.message.includes('Quota exceeded')) {
+			logToPopup(`Quota exceeded on ${model}, trying next model...`, 'warn');
+			return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
+		}
+		throw error;
 	}
-}
-
-// Loading overlay
-function showLoadingOverlay(original) {
-	// Remove existing overlay if present
-	const existing = document.getElementById('gemini-translation-overlay');
-	if (existing) existing.remove();
-
-	const overlay = document.createElement('div');
-	overlay.id = 'gemini-translation-overlay';
-	overlay.style.cssText = `
-    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    background: white; border: 2px solid #d4d4d4; border-radius: 8px;
-    padding: 20px; max-width: 90vw; max-height: 80vh; overflow-y: auto;
-    z-index: 100000; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    font-family: Arial, sans-serif;
-  `;
-	overlay.innerHTML = `
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-      <h4>AI Translation</h4>
-      <button onclick="this.parentElement.parentElement.remove()" 
-              style="background: #ececec; color: #464646; border: none; padding: 5px 10px; border-radius: 50%; cursor: pointer;">
-        ✕
-      </button>
-    </div>
-    <div style="margin-bottom: 10px;">
-      <strong>Original:</strong><br><span style="background: #f8f9fa; padding: 5px;">${original}</span>
-    </div>
-    <div style="">
-      <strong>Translating...</strong>
-    </div>
-  `;
-	document.body.appendChild(overlay);
-}
-
-// Translation overlay
-function showTranslationOverlay(original, translation) {
-	// Remove existing overlay if present
-	const existing = document.getElementById('gemini-translation-overlay');
-	if (existing) existing.remove();
-
-	const overlay = document.createElement('div');
-	overlay.id = 'gemini-translation-overlay';
-	overlay.style.cssText = `
-    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    background: white; border: 2px solid #d4d4d4; border-radius: 8px;
-    padding: 20px; max-width: 90vw; max-height: 80vh; overflow-y: auto;
-    z-index: 100000; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    font-family: Arial, sans-serif;
-  `;
-	overlay.innerHTML = `
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-      <h4>AI Translation</h4>
-      <button onclick="this.parentElement.parentElement.remove()" 
-              style="background: #ececec; color: #464646; border: none; padding: 5px 10px; border-radius: 50%; cursor: pointer;">
-        ✕
-      </button>
-    </div>
-    <div style="margin-bottom: 10px;">
-      <strong>Original:</strong><br><span style="background: #f8f9fa; padding: 5px;">${original}</span>
-    </div>
-    <div>
-      <strong>Translated:</strong><br><span style="background: #f8f9fa; padding: 5px;">${translation}</span>
-    </div>
-  `;
-	document.body.appendChild(overlay);
-}
-
-// Error overlay for context menu failures
-function showErrorOverlay(original, errorMessage) {
-	// Remove existing overlay if present
-	const existing = document.getElementById('gemini-translation-overlay');
-	if (existing) existing.remove();
-
-	const overlay = document.createElement('div');
-	overlay.id = 'gemini-translation-overlay';
-	overlay.style.cssText = `
-    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    background: white; border: 2px solid #dc3545; border-radius: 8px;
-    padding: 20px; max-width: 90vw; z-index: 100000;
-    font-family: Arial, sans-serif;
-  `;
-	overlay.innerHTML = `
-    <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
-      <h4>Translation Error</h4>
-      <button onclick="this.parentElement.parentElement.remove()" 
-              style="background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer;">
-        ✕
-      </button>
-    </div>
-    <div style="color: #721c24;">${errorMessage}</div>
-  `;
-	document.body.appendChild(overlay);
 }
