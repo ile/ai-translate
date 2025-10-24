@@ -95,7 +95,11 @@ if (chrome.contextMenus) {
 
 		// Initialize tab state if not exists
 		if (!tabStates.has(tabId)) {
-			tabStates.set(tabId, { lastClickTime: 0, scriptsInjected: false });
+			tabStates.set(tabId, {
+				lastClickTime: 0,
+				scriptsInjected: false,
+				isTranslating: false
+			});
 		}
 		const tabState = tabStates.get(tabId);
 
@@ -106,16 +110,25 @@ if (chrome.contextMenus) {
 			logToPopup('Debounced context menu click, ignoring', 'warn');
 			return;
 		}
+
+		// Prevent multiple simultaneous translations
+		if (tabState.isTranslating) {
+			console.log('🚫 Translation already in progress for this tab, ignoring click');
+			return;
+		}
+
 		tabState.lastClickTime = currentTime;
 
-		// In the context menu handler, replace the translation call:
 		if (info.menuItemId === 'translateWithAI' && info.selectionText && info.frameId === 0) {
-			console.log('Context menu clicked - translating selection:', info.selectionText);
-			logToPopup('Context menu clicked - translating selection');
+			console.log('🎯 Context menu clicked - translating selection:', info.selectionText.substring(0, 50));
 
-			// Get the target language from storage
-			chrome.storage.sync.get(['targetLang'], (result) => {
-				const targetLang = result.targetLang || 'English'; // Default to English if not set
+			// Get the target language from storage FIRST
+			chrome.storage.sync.get(['targetLang'], (storageResult) => {
+				const targetLang = storageResult.targetLang || 'English';
+				console.log('🎯 TARGET LANGUAGE FROM STORAGE:', targetLang, 'Full storage result:', storageResult);
+
+				// Set translating flag
+				tabState.isTranslating = true;
 
 				// Inject scripts only once
 				const injectScripts = () => {
@@ -143,11 +156,11 @@ if (chrome.contextMenus) {
 					// Create loading overlay
 					chrome.scripting.executeScript({
 						target: { tabId, frameIds: [0] },
-						func: (original, targetLang) => {
-							console.log('Creating loading overlay with text:', original, 'and target language:', targetLang);
+						func: (original) => {
+							console.log('Creating loading overlay with text:', original);
 							createOverlay('loading', original);
 						},
-						args: [info.selectionText, targetLang]
+						args: [info.selectionText]
 					}).then(() => {
 						console.log('Loading overlay created successfully');
 					}).catch(err => {
@@ -156,41 +169,46 @@ if (chrome.contextMenus) {
 
 					// Handle translation with timeout
 					Promise.race([
-						translateText(info.selectionText, targetLang, tab, 'selection'), // Use stored targetLang
+						translateText(info.selectionText, targetLang, tab, 'selection'),
 						new Promise((_, reject) => setTimeout(() => reject(new Error('Translation timeout after 10s')), 10000))
 					]).then(result => {
-						console.log('Translation succeeded, updating overlay with result');
+						console.log('✅ Translation succeeded, updating overlay with result');
 
 						chrome.scripting.executeScript({
 							target: { tabId, frameIds: [0] },
-							func: (original, translation, targetLang) => {
-								console.log('Updating overlay with translation result for language:', targetLang);
+							func: (original, translation) => {
+								console.log('Updating overlay with translation result');
 								createOverlay('translation', original, translation);
 							},
-							args: [info.selectionText, result, targetLang]
+							args: [info.selectionText, result]
 						}).then(() => {
 							console.log('Overlay updated with translation successfully');
 						}).catch(err => {
 							console.error('Overlay update failed:', err.message);
 						});
 					}).catch(error => {
-						console.error('Translation failed, updating overlay with error');
+						console.error('❌ Translation failed, updating overlay with error:', error.message);
 
 						chrome.scripting.executeScript({
 							target: { tabId, frameIds: [0] },
-							func: (original, errorMessage, targetLang) => {
-								console.log('Updating overlay with error for language:', targetLang);
+							func: (original, errorMessage) => {
+								console.log('Updating overlay with error');
 								createOverlay('error', original, errorMessage);
 							},
-							args: [info.selectionText, error.message, targetLang]
+							args: [info.selectionText, error.message]
 						}).then(() => {
 							console.log('Overlay updated with error successfully');
 						}).catch(err => {
 							console.error('Error overlay update failed:', err.message);
 						});
+					}).finally(() => {
+						// Reset translating flag
+						tabState.isTranslating = false;
+						console.log('🏁 Translation completed, flag reset');
 					});
 				}).catch(err => {
 					console.error('Script injection failed:', err.message);
+					tabState.isTranslating = false;
 				});
 			});
 		} else {
@@ -209,6 +227,7 @@ if (chrome.contextMenus) {
 // Simplified translateText
 async function translateText(text, targetLang = 'English', tab = null, source = null) {
 	try {
+		console.log(`🌐 Starting translation to ${targetLang}: "${text.substring(0, 50)}..."`);
 		logToPopup(`Translating to ${targetLang}: ${text.substring(0, 100)}...`);
 		const { apiKey } = await chrome.storage.sync.get(['apiKey']);
 		if (!apiKey) throw new Error('Please set your Gemini API key');
@@ -224,8 +243,10 @@ async function translateText(text, targetLang = 'English', tab = null, source = 
 			});
 		}
 
+		console.log(`✅ Final translation result for ${targetLang}: ${result.substring(0, 100)}`);
 		return result;
 	} catch (error) {
+		console.error(`❌ Translation failed for ${targetLang}:`, error.message);
 		logToPopup(`Translation failed: ${error.message}`, 'error');
 		throw error;
 	}
@@ -233,12 +254,13 @@ async function translateText(text, targetLang = 'English', tab = null, source = 
 
 async function translateWithGemini(text, targetLang, apiKey, modelIndex = 0) {
 	if (modelIndex >= MODELS.length) {
+		console.error('🚫 All models exhausted for:', targetLang);
 		logToPopup('All models exhausted', 'error');
 		throw new Error('All models exhausted. Check quotas or try later.');
 	}
 
 	const model = MODELS[modelIndex];
-	logToPopup(`Trying ${model} (${modelIndex + 1}/${MODELS.length})...`);
+	console.log(`🔄 [${modelIndex + 1}/${MODELS.length}] Trying ${model} for ${targetLang}: "${text.substring(0, 50)}..."`);
 
 	const prompt = `Translate ONLY to ${targetLang}. Respond with JUST the translation:
 
@@ -277,12 +299,13 @@ RULES:
 			try {
 				errorObj = JSON.parse(errorText);
 				if (errorObj.error?.status === 'RESOURCE_EXHAUSTED') {
-					logToPopup(`Quota exceeded on ${model}: ${errorObj.error?.message || 'Rate limit'}`, 'error');
+					console.log(`❌ Quota exceeded on ${model} for ${targetLang}, trying next model...`);
 					return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
 				}
 				throw new Error(`API error: ${errorObj.error?.message || errorText}`);
 			} catch (e) {
-				throw new Error(`HTTP ${response.status} (${model}): ${errorText}`);
+				console.log(`❌ HTTP ${response.status} on ${model} for ${targetLang}, trying next model...`);
+				return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
 			}
 		}
 
@@ -290,11 +313,13 @@ RULES:
 		const candidate = data.candidates?.[0];
 
 		if (candidate?.finishReason === 'MAX_TOKENS' || !candidate?.content?.parts?.[0]?.text) {
-			logToPopup(`${model} failed (${candidate?.finishReason || 'empty'}). Trying next...`, 'warn');
+			console.log(`❌ ${model} failed (${candidate?.finishReason || 'empty'}) for ${targetLang}. Trying next...`);
 			return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
 		}
 
 		let translation = candidate.content.parts[0].text.trim();
+		console.log(`✅ ${model} SUCCESS for ${targetLang}: ${translation.substring(0, 100)}`);
+
 		translation = translation
 			.replace(/^```[\s\S]*?```/gs, '')
 			.replace(/^\*\*([^**]+)\*\*/g, '$1')
@@ -312,16 +337,16 @@ RULES:
 		const paragraphs = translation.split('\n\n').filter(p => p.trim().length > 10);
 		if (paragraphs.length > 1) translation = paragraphs[0];
 
-		logToPopup(`${model} SUCCESS (${modelIndex + 1}/${MODELS.length}): ${translation.substring(0, 100)}`);
+		console.log(`🎉 ${model} FINAL RESULT (${modelIndex + 1}/${MODELS.length}) for ${targetLang}: ${translation.substring(0, 100)}`);
 		return translation;
 	} catch (error) {
-		logToPopup(`${model} error: ${error.message}`, 'error');
+		console.log(`❌ ${model} error for ${targetLang}: ${error.message}`);
 		if (error.name === 'AbortError') {
-			logToPopup(`${model} timed out, trying next model...`, 'warn');
+			console.log(`⏰ ${model} timed out for ${targetLang}, trying next model...`);
 			return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
 		}
 		if (error.message.includes('RESOURCE_EXHAUSTED') || error.message.includes('Quota exceeded')) {
-			logToPopup(`Quota exceeded on ${model}, trying next model...`, 'warn');
+			console.log(`📊 Quota exceeded on ${model} for ${targetLang}, trying next model...`);
 			return await translateWithGemini(text, targetLang, apiKey, modelIndex + 1);
 		}
 		throw error;
