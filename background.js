@@ -108,84 +108,90 @@ if (chrome.contextMenus) {
 		}
 		tabState.lastClickTime = currentTime;
 
+		// In the context menu handler, replace the translation call:
 		if (info.menuItemId === 'translateWithAI' && info.selectionText && info.frameId === 0) {
 			console.log('Context menu clicked - translating selection:', info.selectionText);
 			logToPopup('Context menu clicked - translating selection');
 
-			// Inject scripts only once
-			const injectScripts = () => {
-				if (!tabState.scriptsInjected) {
-					console.log('Injecting scripts for tab:', tabId);
-					tabState.scriptsInjected = true;
-					return chrome.scripting.executeScript({
+			// Get the target language from storage
+			chrome.storage.sync.get(['targetLang'], (result) => {
+				const targetLang = result.targetLang || 'English'; // Default to English if not set
+
+				// Inject scripts only once
+				const injectScripts = () => {
+					if (!tabState.scriptsInjected) {
+						console.log('Injecting scripts for tab:', tabId);
+						tabState.scriptsInjected = true;
+						return chrome.scripting.executeScript({
+							target: { tabId, frameIds: [0] },
+							files: ['custom-elements-polyfill.js', 'overlay.js']
+						}).catch(err => {
+							console.error('Overlay script injection failed:', err.message);
+							logToPopup(`Overlay script injection failed: ${err.message}`, 'error');
+							tabState.scriptsInjected = false;
+							throw err;
+						});
+					}
+					console.log('Scripts already injected for tab:', tabId);
+					return Promise.resolve();
+				};
+
+				// Create loading overlay and handle translation
+				injectScripts().then(() => {
+					console.log('Creating loading overlay for tab:', tabId, 'with target language:', targetLang);
+
+					// Create loading overlay
+					chrome.scripting.executeScript({
 						target: { tabId, frameIds: [0] },
-						files: ['custom-elements-polyfill.js', 'overlay.js']
+						func: (original, targetLang) => {
+							console.log('Creating loading overlay with text:', original, 'and target language:', targetLang);
+							createOverlay('loading', original);
+						},
+						args: [info.selectionText, targetLang]
+					}).then(() => {
+						console.log('Loading overlay created successfully');
 					}).catch(err => {
-						console.error('Overlay script injection failed:', err.message);
-						logToPopup(`Overlay script injection failed: ${err.message}`, 'error');
-						tabState.scriptsInjected = false;
-						throw err;
+						console.error('Loading overlay injection failed:', err.message);
 					});
-				}
-				console.log('Scripts already injected for tab:', tabId);
-				return Promise.resolve();
-			};
 
-			// Create loading overlay and handle translation
-			injectScripts().then(() => {
-				console.log('Creating loading overlay for tab:', tabId);
+					// Handle translation with timeout
+					Promise.race([
+						translateText(info.selectionText, targetLang, tab, 'selection'), // Use stored targetLang
+						new Promise((_, reject) => setTimeout(() => reject(new Error('Translation timeout after 10s')), 10000))
+					]).then(result => {
+						console.log('Translation succeeded, updating overlay with result');
 
-				// Create loading overlay
-				chrome.scripting.executeScript({
-					target: { tabId, frameIds: [0] },
-					func: (original) => {
-						console.log('Creating loading overlay with text:', original);
-						createOverlay('loading', original);
-					},
-					args: [info.selectionText]
-				}).then(() => {
-					console.log('Loading overlay created successfully');
+						chrome.scripting.executeScript({
+							target: { tabId, frameIds: [0] },
+							func: (original, translation, targetLang) => {
+								console.log('Updating overlay with translation result for language:', targetLang);
+								createOverlay('translation', original, translation);
+							},
+							args: [info.selectionText, result, targetLang]
+						}).then(() => {
+							console.log('Overlay updated with translation successfully');
+						}).catch(err => {
+							console.error('Overlay update failed:', err.message);
+						});
+					}).catch(error => {
+						console.error('Translation failed, updating overlay with error');
+
+						chrome.scripting.executeScript({
+							target: { tabId, frameIds: [0] },
+							func: (original, errorMessage, targetLang) => {
+								console.log('Updating overlay with error for language:', targetLang);
+								createOverlay('error', original, errorMessage);
+							},
+							args: [info.selectionText, error.message, targetLang]
+						}).then(() => {
+							console.log('Overlay updated with error successfully');
+						}).catch(err => {
+							console.error('Error overlay update failed:', err.message);
+						});
+					});
 				}).catch(err => {
-					console.error('Loading overlay injection failed:', err.message);
+					console.error('Script injection failed:', err.message);
 				});
-
-				// Handle translation with timeout
-				Promise.race([
-					translateText(info.selectionText, 'English', tab, 'selection'),
-					new Promise((_, reject) => setTimeout(() => reject(new Error('Translation timeout after 10s')), 10000))
-				]).then(result => {
-					console.log('Translation succeeded, updating overlay with result');
-
-					chrome.scripting.executeScript({
-						target: { tabId, frameIds: [0] },
-						func: (original, translation) => {
-							console.log('Updating overlay with translation result');
-							createOverlay('translation', original, translation);
-						},
-						args: [info.selectionText, result]
-					}).then(() => {
-						console.log('Overlay updated with translation successfully');
-					}).catch(err => {
-						console.error('Overlay update failed:', err.message);
-					});
-				}).catch(error => {
-					console.error('Translation failed, updating overlay with error');
-
-					chrome.scripting.executeScript({
-						target: { tabId, frameIds: [0] },
-						func: (original, errorMessage) => {
-							console.log('Updating overlay with error');
-							createOverlay('error', original, errorMessage);
-						},
-						args: [info.selectionText, error.message]
-					}).then(() => {
-						console.log('Overlay updated with error successfully');
-					}).catch(err => {
-						console.error('Error overlay update failed:', err.message);
-					});
-				});
-			}).catch(err => {
-				console.error('Script injection failed:', err.message);
 			});
 		} else {
 			console.log('Invalid context menu call - missing selection, tab, or not in top-level frame');
