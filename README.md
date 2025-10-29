@@ -1,6 +1,6 @@
 # ai-translate
 
-Chrome extensions: https://chromewebstore.google.com/detail/ai-translator/onpkcfbffddilhhehhnngjeabnbplkmg?authuser=0&hl=en
+Chrome extension: https://chromewebstore.google.com/detail/ai-translator/onpkcfbffddilhhehhnngjeabnbplkmg?authuser=0&hl=en
 
 ## Privacy Policy
 
