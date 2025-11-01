@@ -1,45 +1,95 @@
 // overlay.js
 function createOverlay(type, original, content = '') {
-	// Only run in the top-level window
-	if (window !== window.top) {
-		console.log('Skipping createOverlay in iframe:', window.location.href);
-		return;
-	}
+  // Only run in the top-level window
+  if (window !== window.top) {
+    console.log('Skipping createOverlay in iframe:', window.location.href);
+    return;
+  }
 
-	// Check for existing overlay
-	const existing = document.querySelector('gemini-translation-overlay') || document.getElementById('gemini-translation-overlay');
+  // Check for existing overlay and backdrop
+  const existing = document.querySelector('gemini-translation-overlay') || document.getElementById('gemini-translation-overlay');
+  const existingBackdrop = document.getElementById('gemini-translation-backdrop');
 
-	if (existing) {
-		// Update existing overlay instead of creating new one
-		console.log('Updating existing overlay to:', type);
-		updateExistingOverlay(existing, type, original, content);
-		return;
-	}
+  if (existing) {
+    // Update existing overlay instead of creating new one
+    console.log('Updating existing overlay to:', type);
+    updateExistingOverlay(existing, type, original, content);
+    return;
+  }
 
-	console.log('Creating new overlay:', type, 'with original:', original);
+  console.log('Creating new overlay:', type, 'with original:', original);
 
-	// Use Web Component for all states
-	createWebComponentOverlay(type, original, content);
+  // Create backdrop first
+  createBackdrop();
+
+  // Use Web Component for all states
+  createWebComponentOverlay(type, original, content);
+}
+
+function createBackdrop() {
+  // Remove existing backdrop if any
+  const existingBackdrop = document.getElementById('gemini-translation-backdrop');
+  if (existingBackdrop) {
+    existingBackdrop.remove();
+  }
+
+  // Create transparent backdrop
+  const backdrop = document.createElement('div');
+  backdrop.id = 'gemini-translation-backdrop';
+  backdrop.style.cssText = `
+		position: fixed !important;
+		top: 0 !important;
+		left: 0 !important;
+		width: 100vw !important;
+		height: 100vh !important;
+		background: rgba(0, 0, 0, 0.5) !important;
+		z-index: 2147483646 !important;
+		cursor: pointer !important;
+	`;
+
+  // Close overlay when backdrop is clicked
+  backdrop.addEventListener('click', () => {
+    closeAllOverlays();
+  });
+
+  document.body.appendChild(backdrop);
+  console.log('Backdrop created');
+}
+
+function closeAllOverlays() {
+  // Remove overlay
+  const overlay = document.querySelector('gemini-translation-overlay') || document.getElementById('gemini-translation-overlay');
+  if (overlay) {
+    overlay.remove();
+    console.log('Overlay removed');
+  }
+
+  // Remove backdrop
+  const backdrop = document.getElementById('gemini-translation-backdrop');
+  if (backdrop) {
+    backdrop.remove();
+    console.log('Backdrop removed');
+  }
 }
 
 function updateExistingOverlay(existing, type, original, content) {
-	// For Web Component, update attributes and let it re-render
-	if (existing.tagName === 'GEMINI-TRANSLATION-OVERLAY') {
-		existing.setAttribute('data-type', type);
-		existing.setAttribute('data-original', original);
-		if (content) {
-			existing.setAttribute('data-content', content);
-		} else {
-			existing.removeAttribute('data-content');
-		}
-		console.log('Web Component attributes updated for:', type);
-		return;
-	}
+  // For Web Component, update attributes and let it re-render
+  if (existing.tagName === 'GEMINI-TRANSLATION-OVERLAY') {
+    existing.setAttribute('data-type', type);
+    existing.setAttribute('data-original', original);
+    if (content) {
+      existing.setAttribute('data-content', content);
+    } else {
+      existing.removeAttribute('data-content');
+    }
+    console.log('Web Component attributes updated for:', type);
+    return;
+  }
 
-	// Fallback for div overlay
-	let borderColor = '#d4d4d4';
-	let title = 'AI Translation';
-	let buttonStyle = `
+  // Fallback for div overlay
+  let borderColor = '#d4d4d4';
+  let title = 'AI Translation';
+  let buttonStyle = `
     background: #ececec !important; 
     color: #464646 !important; 
     border: none !important; 
@@ -52,10 +102,10 @@ function updateExistingOverlay(existing, type, original, content) {
     font-size: 16px !important;
     line-height: 1 !important;
   `;
-	let contentHtml = '';
+  let contentHtml = '';
 
-	if (type === 'loading') {
-		contentHtml = `
+  if (type === 'loading') {
+    contentHtml = `
       <div style="margin-bottom: 10px;">
         <strong>Original:</strong><br>
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${original}</span>
@@ -65,8 +115,8 @@ function updateExistingOverlay(existing, type, original, content) {
         <strong>Translating...</strong>
       </div>
     `;
-	} else if (type === 'translation') {
-		contentHtml = `
+  } else if (type === 'translation') {
+    contentHtml = `
       <div style="margin-bottom: 10px;">
         <strong>Original:</strong><br>
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${original}</span>
@@ -76,10 +126,10 @@ function updateExistingOverlay(existing, type, original, content) {
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${content}</span>
       </div>
     `;
-	} else if (type === 'error') {
-		title = 'Translation Error';
-		borderColor = '#dc3545';
-		buttonStyle = `
+  } else if (type === 'error') {
+    title = 'Translation Error';
+    borderColor = '#dc3545';
+    buttonStyle = `
       background: #dc3545 !important; 
       color: white !important; 
       border: none !important;
@@ -92,44 +142,44 @@ function updateExistingOverlay(existing, type, original, content) {
       font-size: 16px !important;
       line-height: 1 !important;
     `;
-		contentHtml = `
+    contentHtml = `
       <div style="color: #721c24; padding: 10px; background: #f8d7da; border-radius: 4px;">
         ${content}
       </div>
     `;
-	}
+  }
 
-	// Update the existing overlay
-	existing.style.borderColor = borderColor;
+  // Update the existing overlay
+  existing.style.borderColor = borderColor;
 
-	// Update title and content
-	const header = existing.querySelector('h4');
-	if (header) {
-		header.textContent = title;
-	}
+  // Update title and content
+  const header = existing.querySelector('h4');
+  if (header) {
+    header.textContent = title;
+  }
 
-	const button = existing.querySelector('button');
-	if (button) {
-		button.style.cssText = buttonStyle + ' cursor: pointer !important;';
-	}
+  const button = existing.querySelector('button');
+  if (button) {
+    button.style.cssText = buttonStyle + ' cursor: pointer !important;';
+  }
 
-	// Update content area (skip the header and button)
-	const contentElements = existing.querySelectorAll('div');
-	let contentUpdated = false;
+  // Update content area (skip the header and button)
+  const contentElements = existing.querySelectorAll('div');
+  let contentUpdated = false;
 
-	for (let i = 0; i < contentElements.length; i++) {
-		const element = contentElements[i];
-		// Find the content div (not the header div)
-		if (!element.querySelector('h4') && !element.querySelector('button')) {
-			element.innerHTML = contentHtml;
-			contentUpdated = true;
-			break;
-		}
-	}
+  for (let i = 0; i < contentElements.length; i++) {
+    const element = contentElements[i];
+    // Find the content div (not the header div)
+    if (!element.querySelector('h4') && !element.querySelector('button')) {
+      element.innerHTML = contentHtml;
+      contentUpdated = true;
+      break;
+    }
+  }
 
-	// If we couldn't find the content area, replace the entire innerHTML
-	if (!contentUpdated) {
-		existing.innerHTML = `
+  // If we couldn't find the content area, replace the entire innerHTML
+  if (!contentUpdated) {
+    existing.innerHTML = `
       <div style="display: flex !important; justify-content: space-between !important; align-items: center !important; margin-bottom: 15px !important;">
         <h4 style="margin: 0 !important; font-size: 16px !important;">${title}</h4>
         <button id="close-overlay-btn" style="${buttonStyle} cursor: pointer !important;">
@@ -142,67 +192,67 @@ function updateExistingOverlay(existing, type, original, content) {
       </div>
     `;
 
-		// Re-attach event listener
-		const closeBtn = existing.querySelector('#close-overlay-btn');
-		if (closeBtn) {
-			closeBtn.addEventListener('click', () => {
-				existing.remove();
-			});
-		}
-	}
+    // Re-attach event listener
+    const closeBtn = existing.querySelector('#close-overlay-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        closeAllOverlays();
+      });
+    }
+  }
 
-	console.log('Existing overlay updated to:', type);
+  console.log('Existing overlay updated to:', type);
 }
 
 function createWebComponentOverlay(type, original, content) {
-	console.log('Creating Web Component overlay for:', type);
+  console.log('Creating Web Component overlay for:', type);
 
-	// Define the Web Component if not already defined
-	if (typeof customElements !== 'undefined' && customElements !== null && typeof customElements.get === 'function') {
-		if (!customElements.get('gemini-translation-overlay')) {
-			console.log('Defining Web Component: gemini-translation-overlay');
+  // Define the Web Component if not already defined
+  if (typeof customElements !== 'undefined' && customElements !== null && typeof customElements.get === 'function') {
+    if (!customElements.get('gemini-translation-overlay')) {
+      console.log('Defining Web Component: gemini-translation-overlay');
 
-			class GeminiTranslationOverlay extends HTMLElement {
-				constructor() {
-					super();
-					this.shadowContainer = null;
-					try {
-						this.shadowContainer = this.attachShadow({ mode: 'open' });
-						console.log('Shadow DOM created successfully');
-					} catch (error) {
-						console.error('Failed to attach shadow DOM:', error);
-						this.shadowContainer = this;
-						console.log('Using light DOM as fallback');
-					}
-				}
+      class GeminiTranslationOverlay extends HTMLElement {
+        constructor() {
+          super();
+          this.shadowContainer = null;
+          try {
+            this.shadowContainer = this.attachShadow({ mode: 'open' });
+            console.log('Shadow DOM created successfully');
+          } catch (error) {
+            console.error('Failed to attach shadow DOM:', error);
+            this.shadowContainer = this;
+            console.log('Using light DOM as fallback');
+          }
+        }
 
-				static get observedAttributes() {
-					return ['data-type', 'data-original', 'data-content'];
-				}
+        static get observedAttributes() {
+          return ['data-type', 'data-original', 'data-content'];
+        }
 
-				attributeChangedCallback(name, oldValue, newValue) {
-					console.log(`Attribute changed: ${name} from ${oldValue} to ${newValue}`);
-					if (oldValue !== newValue) {
-						this.render();
-					}
-				}
+        attributeChangedCallback(name, oldValue, newValue) {
+          console.log(`Attribute changed: ${name} from ${oldValue} to ${newValue}`);
+          if (oldValue !== newValue) {
+            this.render();
+          }
+        }
 
-				connectedCallback() {
-					console.log('Web Component connected:', this.getAttribute('data-type'));
-					this.render();
-				}
+        connectedCallback() {
+          console.log('Web Component connected:', this.getAttribute('data-type'));
+          this.render();
+        }
 
-				// In the Web Component class, update the render method:
-				render() {
-					const type = this.getAttribute('data-type') || 'loading';
-					const original = this.getAttribute('data-original') || '';
-					const content = this.getAttribute('data-content') || '';
+        // In the Web Component class, update the render method:
+        render() {
+          const type = this.getAttribute('data-type') || 'loading';
+          const original = this.getAttribute('data-original') || '';
+          const content = this.getAttribute('data-content') || '';
 
-					console.log('Rendering Web Component with type:', type);
+          console.log('Rendering Web Component with type:', type);
 
-					let borderColor = '#d4d4d4';
-					let title = 'AI Translation';
-					let buttonStyles = `
+          let borderColor = '#d4d4d4';
+          let title = 'AI Translation';
+          let buttonStyles = `
     background: #ececec;
     color: #464646;
     border: none;
@@ -217,17 +267,17 @@ function createWebComponentOverlay(type, original, content) {
     margin: 0;
     cursor: pointer;
   `;
-					let contentHtml = '';
+          let contentHtml = '';
 
-					// SVG close icon - perfectly centered
-					const closeIcon = `
+          // SVG close icon - perfectly centered
+          const closeIcon = `
     <svg width="9" height="9" viewBox="0 0 14 14" fill="currentColor">
       <path d="M13 1L1 13M1 1l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
   `;
 
-					if (type === 'loading') {
-						contentHtml = `
+          if (type === 'loading') {
+            contentHtml = `
       <div style="margin-bottom: 10px;">
         <strong>Original:</strong><br>
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${original}</span>
@@ -237,8 +287,8 @@ function createWebComponentOverlay(type, original, content) {
         <strong>Translating...</strong>
       </div>
     `;
-					} else if (type === 'translation') {
-						contentHtml = `
+          } else if (type === 'translation') {
+            contentHtml = `
       <div style="margin-bottom: 10px;">
         <strong>Original:</strong><br>
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${original}</span>
@@ -248,10 +298,10 @@ function createWebComponentOverlay(type, original, content) {
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${content}</span>
       </div>
     `;
-					} else if (type === 'error') {
-						title = 'Translation Error';
-						borderColor = '#dc3545';
-						buttonStyles = `
+          } else if (type === 'error') {
+            title = 'Translation Error';
+            borderColor = '#dc3545';
+            buttonStyles = `
       background: #dc3545;
       color: white;
       border: none;
@@ -266,14 +316,14 @@ function createWebComponentOverlay(type, original, content) {
       margin: 0;
       cursor: pointer;
     `;
-						contentHtml = `
+            contentHtml = `
       <div style="color: #721c24; padding: 10px; background: #f8d7da; border-radius: 4px;">
         ${content}
       </div>
     `;
-					}
+          }
 
-					const styles = `
+          const styles = `
     <style>
       :host {
         position: fixed !important;
@@ -336,7 +386,7 @@ function createWebComponentOverlay(type, original, content) {
     </style>
   `;
 
-					const template = `
+          const template = `
     ${styles}
     <div class="header">
       <h4>${title}</h4>
@@ -348,63 +398,63 @@ function createWebComponentOverlay(type, original, content) {
     </div>
   `;
 
-					if (this.shadowContainer instanceof ShadowRoot) {
-						this.shadowContainer.innerHTML = template;
+          if (this.shadowContainer instanceof ShadowRoot) {
+            this.shadowContainer.innerHTML = template;
 
-						// Add event listener for shadow DOM
-						const closeBtn = this.shadowContainer.getElementById('close-overlay');
-						if (closeBtn) {
-							closeBtn.addEventListener('click', () => {
-								this.remove();
-							});
-						}
-					} else {
-						this.innerHTML = template;
+            // Add event listener for shadow DOM
+            const closeBtn = this.shadowContainer.getElementById('close-overlay');
+            if (closeBtn) {
+              closeBtn.addEventListener('click', () => {
+                closeAllOverlays();
+              });
+            }
+          } else {
+            this.innerHTML = template;
 
-						// Add event listener for light DOM
-						const closeBtn = this.querySelector('#close-overlay');
-						if (closeBtn) {
-							closeBtn.addEventListener('click', () => {
-								this.remove();
-							});
-						}
-					}
-				}
-			}
+            // Add event listener for light DOM
+            const closeBtn = this.querySelector('#close-overlay');
+            if (closeBtn) {
+              closeBtn.addEventListener('click', () => {
+                closeAllOverlays();
+              });
+            }
+          }
+        }
+      }
 
-			try {
-				customElements.define('gemini-translation-overlay', GeminiTranslationOverlay);
-				console.log('Web Component defined successfully');
-			} catch (error) {
-				console.error('Failed to define Web Component:', error);
-				createDivOverlay(type, original, content);
-				return;
-			}
-		}
+      try {
+        customElements.define('gemini-translation-overlay', GeminiTranslationOverlay);
+        console.log('Web Component defined successfully');
+      } catch (error) {
+        console.error('Failed to define Web Component:', error);
+        createDivOverlay(type, original, content);
+        return;
+      }
+    }
 
-		// Create the Web Component
-		console.log('Creating Web Component instance for:', type);
-		const overlay = document.createElement('gemini-translation-overlay');
-		overlay.setAttribute('data-type', type);
-		overlay.setAttribute('data-original', original);
-		if (content) overlay.setAttribute('data-content', content);
+    // Create the Web Component
+    console.log('Creating Web Component instance for:', type);
+    const overlay = document.createElement('gemini-translation-overlay');
+    overlay.setAttribute('data-type', type);
+    overlay.setAttribute('data-original', original);
+    if (content) overlay.setAttribute('data-content', content);
 
-		document.body.appendChild(overlay);
-		console.log('Web Component overlay created successfully for type:', type);
+    document.body.appendChild(overlay);
+    console.log('Web Component overlay created successfully for type:', type);
 
-	} else {
-		console.warn('customElements API unavailable, using fallback div overlay');
-		createDivOverlay(type, original, content);
-	}
+  } else {
+    console.warn('customElements API unavailable, using fallback div overlay');
+    createDivOverlay(type, original, content);
+  }
 }
 
 // Keep the div overlay as fallback
 function createDivOverlay(type, original, content) {
-	console.log('Creating fallback div overlay for:', type);
+  console.log('Creating fallback div overlay for:', type);
 
-	let borderColor = '#d4d4d4';
-	let title = 'AI Translation';
-	let buttonStyle = `
+  let borderColor = '#d4d4d4';
+  let title = 'AI Translation';
+  let buttonStyle = `
     background: #ececec !important; 
     color: #464646 !important; 
     border: none !important; 
@@ -417,17 +467,17 @@ function createDivOverlay(type, original, content) {
     font-size: 16px !important;
     line-height: 1 !important;
   `;
-	let contentHtml = '';
+  let contentHtml = '';
 
-	// SVG close icon
-	const closeIcon = `
+  // SVG close icon
+  const closeIcon = `
     <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
       <path d="M13 1L1 13M1 1l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
   `;
 
-	if (type === 'loading') {
-		contentHtml = `
+  if (type === 'loading') {
+    contentHtml = `
       <div style="margin-bottom: 10px;">
         <strong>Original:</strong><br>
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${original}</span>
@@ -437,8 +487,8 @@ function createDivOverlay(type, original, content) {
         <strong>Translating...</strong>
       </div>
     `;
-	} else if (type === 'translation') {
-		contentHtml = `
+  } else if (type === 'translation') {
+    contentHtml = `
       <div style="margin-bottom: 10px;">
         <strong>Original:</strong><br>
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${original}</span>
@@ -448,10 +498,10 @@ function createDivOverlay(type, original, content) {
         <span style="background: #f8f9fa; padding: 5px; border-radius: 4px; display: inline-block;">${content}</span>
       </div>
     `;
-	} else if (type === 'error') {
-		title = 'Translation Error';
-		borderColor = '#dc3545';
-		buttonStyle = `
+  } else if (type === 'error') {
+    title = 'Translation Error';
+    borderColor = '#dc3545';
+    buttonStyle = `
       background: #dc3545 !important; 
       color: white !important; 
       border: none !important;
@@ -464,16 +514,16 @@ function createDivOverlay(type, original, content) {
       font-size: 16px !important;
       line-height: 1 !important;
     `;
-		contentHtml = `
+    contentHtml = `
       <div style="color: #721c24; padding: 10px; background: #f8d7da; border-radius: 4px;">
         ${content}
       </div>
     `;
-	}
+  }
 
-	const divOverlay = document.createElement('div');
-	divOverlay.id = 'gemini-translation-overlay';
-	divOverlay.style.cssText = `
+  const divOverlay = document.createElement('div');
+  divOverlay.id = 'gemini-translation-overlay';
+  divOverlay.style.cssText = `
     position: fixed !important; 
     top: 50% !important; 
     left: 50% !important; 
@@ -493,7 +543,7 @@ function createDivOverlay(type, original, content) {
     transition: border-color 0.2s ease-in-out;
   `;
 
-	divOverlay.innerHTML = `
+  divOverlay.innerHTML = `
     <div style="display: flex !important; justify-content: space-between !important; align-items: center !important; margin-bottom: 15px !important;">
       <h4 style="margin: 0 !important; font-size: 16px !important;">${title}</h4>
       <button id="close-overlay" style="${buttonStyle} cursor: pointer !important;">
@@ -506,14 +556,14 @@ function createDivOverlay(type, original, content) {
     </div>
   `;
 
-	// Use event listener instead of inline onclick
-	const closeBtn = divOverlay.querySelector('#close-overlay');
-	if (closeBtn) {
-		closeBtn.addEventListener('click', () => {
-			divOverlay.remove();
-		});
-	}
+  // Use event listener instead of inline onclick
+  const closeBtn = divOverlay.querySelector('#close-overlay');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      closeAllOverlays();
+    });
+  }
 
-	document.body.appendChild(divOverlay);
-	console.log('Fallback div overlay created for type:', type);
+  document.body.appendChild(divOverlay);
+  console.log('Fallback div overlay created for type:', type);
 }
