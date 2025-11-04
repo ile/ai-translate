@@ -1,8 +1,8 @@
 {
 	"manifest_version": 3,
 	"name": "AI Translator",
-	"version": "1.0.6",
-	"description": "",
+	"version": "1.0.7",
+	"description": "AI-powered translation using Google Gemini.",
 	"content_scripts": [
 		{
 			"matches": [
